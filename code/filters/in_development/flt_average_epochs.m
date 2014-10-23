@@ -1,22 +1,15 @@
 function signal = flt_average_epochs(varargin)
 % Average signals corresponding to a same stimulus and trial.
-% Signal = flt_average_epochs(Signal, StimulusCodes, StimulusPerTrial, EpochsToAverage)
+% Signal = flt_average_epochs(Signal, StimulusPerTrial, EpochsPerTrial, EpochsToAverage)
 %
 % In:
 %   Signal          : Epoched EEGLAB data structure.
 %
-%   StimulusCodes   : Cell array of events considered to be 'stimulus'. Each
-%                     element on this array can be either a string, or an
-%                     array cell of strings. The latter case means that all 
-%                     the strings grouped into one array actually belong to 
-%                     a same stimulus (for example, the event type 
-%                     '1-TARGET' and the event type '1-NON-TARGET' both 
-%                     belong to the stimulus 1).
-%                     If not specified, the function will search for event
-%                     type definitions on the EEGLAB data structure.
-%
 %   StimulusPerTrial: Number of repetitions of a same stimulus that makes a
 %                     trial. The default value is 15.
+%
+%   EpochsPerTrial  : Number of epochs that belong to a same trial.
+%                     TODO! no queda claro este parametro
 %
 %   EpochsToAverage : Number of epochs to take into consideration from 
 %                     each trial when averaging. Must be less or equal than
@@ -80,6 +73,7 @@ function signal = flt_average_epochs(varargin)
 % >> markers = {{'1Y','2Y','3Y','4Y','5Y','6Y','7Y','8Y','9Y','10Y','11Y','12Y'},
 %               {'1N','2N','3N','4N','5N','6N','7N','8N','9N','10N','11N','12N'}};
 % 
+% Markers with the same stimulus are considered
 % >> stim = {{'1Y', '1N'}, {'2Y', '2N'}, {'3Y', '3N'}, {'4Y', '4N'}, {'5Y', '5N'},
 %            {'6Y', '6N'}, {'7Y', '7N'}, {'8Y', '8N'}, {'9Y', '9N'}, {'10Y', '10N'},
 %            {'11Y', '11N'}, {'12Y', '12N'} };
@@ -92,6 +86,10 @@ function signal = flt_average_epochs(varargin)
 
 
 if ~exp_beginfun('filter'); return; end;
+
+% --------------------
+% Arguments Definition
+% --------------------
 
 % Declare that this filter requires epoched data
 declare_properties(...
@@ -110,59 +108,47 @@ arg_define(varargin, ...
         'either a string, or an array cell of strings. In the latter case, this means that all the strings ' ...
         'grouped into one array actually belong to a same stimulus. If not specified, the function will ' ...
         'search for event type definitions on the EEGLAB data structure.']),...
-    arg({'stimpertrial','StimulusPerTrial'}, 15, [1 Inf], ...
-        'Stimulus Per Trial. Number of consecutive epochs belonging to a same stimulus, that will constitute one single trial.'),...
+    arg({'stim_per_trial','StimulusPerTrial'}, 15, [1 Inf], ...
+        'Stimulus Per Trial. Number of repetitions of a same stimulus inside a trial.'),...
+    arg({'epochs_per_trial','EpochsPerTrial'}, [], [1 Inf], ...
+        'Epochs Per Trial. Number of consecutive epochs that make one single trial.'),...
     arg({'epochs2avg','EpochsToAverage'}, [], [1 Inf], ...
-        'Epochs to average. Number of epochs from a same trial to use when averaging. Must be less or equal than StimulusPerTrial. By default, this argument will be equal to StimulusPerTrial.'));
+        'Epochs to average. Number of epochs from a same trial and stimulus to use when averaging. Must be less or equal than StimulusPerTrial. By default, this argument will be equal to StimulusPerTrial.'));
         
 % If EpochsToAverage was not specified, make it equal to StimulusPerTrial
 if isempty(epochs2avg)
-   epochs2avg = stimpertrial;
+   epochs2avg = stim_per_trial;
 end
 
-% If StimulusCodes was not specified, make it equal to event types
-if isempty(stimulus)
-    stimulus = unique({setep.epoch(:).type});       % Get all stimulus codes present on the signal
+% If EpochsPerTrial was not specified, make it equal to the number of
+% unique events, multiplied by StimulusPerTrial
+stimulus = unique({signal.event.type});
+numStim = length(stimulus);
+
+if isempty(epochs_per_trial)    
+    epochs_per_trial = numStim * stim_per_trial;
 end
 
-% Validate that required fields are present.
+% -----------
+% Validations
+% -----------
+
+% Validate that the required fields are present.
 %utl_check_fields(signal,{'event','epoch','srate','pnts'},'signal','signal');
 utl_check_fields(signal,{'event','epoch','data'},'signal','signal');
 
-% Get number of different stimulus present
-[rows, numStim] = size(stimulus);
+% Check that the trial size fits
+totalEpochs = length(signal.epoch);
+% 
+% if mod(totalEpochs, epochs_per_trial) ~= 0
+%    error('Invalid Signal. All stimulus should be present on each trial.'); 
+% end
 
-% Check that stimulus definition has the correct size
-if rows ~= 1
-    error('Invalid StimulusCodes');
-end
+totalTrials = totalEpochs / epochs_per_trial;
 
-% We will assume that all stimulus are present on each trial,
-% i.e. the trial consists of stimpertrial repetitions of each
-% defined stimulus.
-trialSize = numStim * stimpertrial;
-
-% --------------------------------------------------------------------
-% TODO: The case where not all stimulus are present on a same trial is
-% not being considered yet.
-% A check should be made on each loop, for example:
-% #(unique(Signal[i:trialSize])) = numStim
-% Second idea: set numStim = unique(Signal[i:trialSize]))
-% Keep order in unique():
-% [_,order] = unique(stimulus_in_trial,'first');
-% stimulus_in_trial(sort(order))
-% and average each stimulus present, in order
-% --------------------------------------------------------------------
-
-% Get number of epochs, and check that the trial size fits (if it does not,
-% our assumption about all stimulus being present in each trial is incorrect).
-numEpochs = length(set_epoched.epoch);
-
-if mod(numEpochs, trialSize) ~= 0
-   error('Invalid Signal. All stimulus should be present on each trial.'); 
-end
-
-totalTrials = numEpochs / trialSize;
+% ----------------
+% Signal Averaging
+% ----------------
 
 % Map each event type to a number
 stimulusMap = containers.Map();     
@@ -175,41 +161,47 @@ for i = 1:numStim
 end
 
 % This matrix will say, for each trial and stimulus, the index where the
-% stimulus first appears. The rest of the appearences of that stimulus 
+% stimulus first appeared. The rest of the appearences of that stimulus 
 % within that trial will be averaged and then deleted; the result of the
 % average will be saved in the position of the first appearence.
 stimFirstApp = zeros(totalTrials, numStim);
 
+% TODO: this could be done using pop_rejepoch?
+
 % Loop through each "trial"
-for trial = 1:trialSize:numEpochs
+for trial = 1:totalTrials
     % Loop through each epoch inside the trial and average.
-    trialEnd = trial + trialSize - 1;
+    trial_start = (trial - 1) * epochs_per_trial + 1;
+    trial_end = trial_start + epochs_per_trial - 1;
     
-    for numEpoch = trial:trialEnd
+    % TODO!: hacer a lo matlab
+    for numEpoch = trial_start:trial_end
        
         % If this is the first time that we see this stimulus, save it's
         % position and continue.
         currStim = signal.epoch(numEpoch).type;
-        stimInd = stimulusMap(currStim);
+        stimIndex = stimulusMap(currStim);
         
-        if stimFirstApp(trial, stimInd) == 0
-            stimFirstApp(trial, stimInd) = numEpoch;
+        if stimFirstApp(trial, stimIndex) == 0
+            stimFirstApp(trial, stimIndex) = numEpoch;
            continue; 
         end
         
         % If not, add its signal to the average
-        avgEpochInd = stimFirstApp(trial, stimInd);
+        epochWithAvg = stimFirstApp(trial, stimIndex);
         epochSignal = signal.data(:,:,numEpoch);
-        signal(:,:,avgEpochInd) = signal(:,:,avgEpochInd) + epochSignal;
+        signal.data(:,:,epochWithAvg) = signal.data(:,:,epochWithAvg) + epochSignal;
         
     end
 end
 
 % Discard information about epochs that don't contain averages.
+% 
+
 % TODO http://www.mathworks.com/help/nnet/ref/removerows.html?
 % CAMBIAR LAS LATENCIAS
         
         
-% Divide each remaining epoch by the number of trials
+% Divide each remaining epoch by the number of epochs per trial
 
 exp_endfun;
