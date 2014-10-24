@@ -123,7 +123,7 @@ end
 % If EpochsPerTrial was not specified, make it equal to the number of
 % unique events, multiplied by StimulusPerTrial
 stimulus = unique({signal.event.type});
-numStim = length(stimulus);
+totalStims = length(stimulus);
 
 if isempty(epochs_per_trial)    
     epochs_per_trial = numStim * stim_per_trial;
@@ -138,6 +138,15 @@ end
 utl_check_fields(signal,{'event','epoch','data'},'signal','signal');
 
 % Check that the trial size fits
+% 
+% if mod(totalEpochs, epochs_per_trial) ~= 0
+%    error('Invalid Signal. All stimulus should be present on each trial.'); 
+% end
+
+% ----------------
+% Signal Averaging
+% ----------------
+
 totalEpochs = length(signal.epoch);
 % 
 % if mod(totalEpochs, epochs_per_trial) ~= 0
@@ -146,25 +155,11 @@ totalEpochs = length(signal.epoch);
 
 totalTrials = totalEpochs / epochs_per_trial;
 
-% ----------------
-% Signal Averaging
-% ----------------
-
-% Map each event type to a number
-stimulusMap = containers.Map();     
-
-for i = 1:numStim
-    % Loop each stimulus and asign them the same code
-    for j = 1:length(stimulus{i})
-       stimulusMap(stimulus{i}) = i;
-    end
-end
-
 % This matrix will say, for each trial and stimulus, the index where the
 % stimulus first appeared. The rest of the appearences of that stimulus 
 % within that trial will be averaged and then deleted; the result of the
 % average will be saved in the position of the first appearence.
-stimFirstApp = zeros(totalTrials, numStim);
+stimFirstApp = zeros(totalTrials, totalStims);
 
 % TODO: this could be done using pop_rejepoch?
 
@@ -174,21 +169,22 @@ for trial = 1:totalTrials
     trial_start = (trial - 1) * epochs_per_trial + 1;
     trial_end = trial_start + epochs_per_trial - 1;
     
-    % TODO!: hacer a lo matlab
+    %trial_stims = {signal.epoch(trial_start:trial_end).type};
+    
     for numEpoch = trial_start:trial_end
        
         % If this is the first time that we see this stimulus, save it's
         % position and continue.
         currStim = signal.epoch(numEpoch).type;
-        stimIndex = stimulusMap(currStim);
+        numStim = find(strcmp(currStim, stimulus));
         
-        if stimFirstApp(trial, stimIndex) == 0
-            stimFirstApp(trial, stimIndex) = numEpoch;
+        if stimFirstApp(trial, numStim) == 0
+            stimFirstApp(trial, numStim) = numEpoch;
            continue; 
         end
         
         % If not, add its signal to the average
-        epochWithAvg = stimFirstApp(trial, stimIndex);
+        epochWithAvg = stimFirstApp(trial, numStim);
         epochSignal = signal.data(:,:,numEpoch);
         signal.data(:,:,epochWithAvg) = signal.data(:,:,epochWithAvg) + epochSignal;
         
@@ -196,12 +192,16 @@ for trial = 1:totalTrials
 end
 
 % Discard information about epochs that don't contain averages.
-% 
+remaining_trials = stimFirstApp(:);
+remaining_trials(remaining_trials == 0) = [];
 
-% TODO http://www.mathworks.com/help/nnet/ref/removerows.html?
-% CAMBIAR LAS LATENCIAS
-        
-        
+signal.data = signal.data(:, :, remaining_trials);
+signal.trials = length(remaining_trials);
+signal.event = signal.event(remaining_trials);
+signal.urevent = signal.urevent(remaining_trials);
+signal.epoch = signal.epoch(remaining_trials);
+
 % Divide each remaining epoch by the number of epochs per trial
+signal.data = signal.data / epochs_per_trial;
 
 exp_endfun;
