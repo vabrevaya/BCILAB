@@ -96,8 +96,8 @@ declare_properties(...
     'name', 'AverageEpochs', ...
     'depends', 'set_makepos', ...       % Require epoched data
     'depends', 'set_targetmarkers', ... % Require markers to be already specified
-    'independent_channels',true);
-    %'independent_trials',false,...     % TODO (not sure)
+    'independent_channels', true,...
+    'independent_trials', true);
     %'follows', {'flt_fourier'}, ...    % TODO (not sure)
 
 % Input arguments declaration
@@ -191,7 +191,7 @@ for trial = 1:totalTrials
     end
 end
 
-% Discard information about epochs that don't contain averages.
+% Discard information about epochs that do not contain averages.
 remaining_trials = stimFirstApp(:);
 remaining_trials(remaining_trials == 0) = [];
 
