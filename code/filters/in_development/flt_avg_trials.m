@@ -1,7 +1,7 @@
 function signal = flt_avg_trials(varargin)
 % Average epoched signal.
 % This filter performs an average over trials belonging to a same stimulus
-% and "block" - a grouping of trials such that all trials belonging to a
+% and "block" - a grouping of epochs such that all epochs belonging to a
 % same event (stimulus) are actually repetitions of a same task, meant to 
 % be averaged.
 %
@@ -12,14 +12,13 @@ function signal = flt_avg_trials(varargin)
 %   Signal                : Epoched dataset to be processed.
 %
 %   RepetitionsPerBlock   : Number of repetitions of a same stimulus inside
-%                           one block. It is assumed that this number does
-%                           not vary among different blocks.
-%                           Default value: 15
+%                           each block. The number of repetitions in a
+%                           block must be the same for all stimulus, and
+%                           the same on each block.
 %
-%   StimulusPerBlock      : Number of distinct stimulus that occur on each
-%                           block of trials. It is assumed that this number
-%                           does not vary among different blocks.
-%                           Default value: 2
+%   StimulusPerBlock      : Number of *distinct* stimulus that occur on 
+%                           each block of trials. The number of stimulus
+%                           per block must be the same for all blocks.
 %
 %   RepetitionsToAverage  : Number of trials belonging to a same stimulus 
 %                           that will be actually used for averaging. Must 
@@ -27,13 +26,16 @@ function signal = flt_avg_trials(varargin)
 %                           If not specified, this argument will be equal 
 %                           to RepetitionsPerBlock.
 % Out:
-%   Signal                : Epoched signal, where each trial is the average 
-%                           of all trials belonging to a same stimulus and 
+%   Signal                : Epoched signal, where each epoch is the average 
+%                           of all epochs belonging to a same stimulus and 
 %                           block.
 %    
 % The filter receives an epoched signal and outputs a new epoched signal 
-% with less trials than the original one. Each new epoch will consist of 
-% an average of trials belonging to a same stimulus and block.
+% with less trials than the original one. Each new trial will be the 
+% average of epochs belonging to a same stimulus and block.
+% 
+% TODO: for now it actually keeps all the epochs; those which do not
+% contain the averages have their event types modified to '__'
 %
 % The argument RepetitionsPerBlock indicates how many repetitions of a same 
 % stimulus (event) must be seen before a new block (group of trials) 
@@ -41,26 +43,22 @@ function signal = flt_avg_trials(varargin)
 %
 % The argument StimulusPerBlock specifies the number of distinct events
 % that appear on each block. Muliplying this value by RepetitionsPerBlock
-% we can know the total number of trials on each block.
+% gives us the total number of trials per block, in the original signal.
 %
-% As an example, if used with signals produced by a P300Speller[1], a value 
-% of RepetitionsPerBlock = 15 means that we will have, on each block, 15 
-% repetitions of each row/column in the speller matrix. The first 15 trials 
-% corresponding to a flashing of the same row belong to a same letter the 
-% user intended to spell; the next group of 15 appearences of that stimulus 
-% correspond to the second letter, and so on. Each block will have 12 
-% different stimulus, one for each row/column, so StimlulusPerBlock will be
-% equal to 12. A block is made out of all 12 stimulus, each one presented
-% 15 times, with a total of 12*15 trials per block.
+% As an example, consider a dataset produced by a P300Speller[1] 
+% application. A value of RepetitionsPerBlock = 15 means that we expect to 
+% have, on each block, 15 repetitions of each row/column of the speller 
+% matrix. In this example we consider a block to be a set of 
+% intensifications aimed at identifying one single letter. Each block will 
+% have 12 different stimulus, one for each row/column, so StimlulusPerBlock 
+% will be equal to 12. A block is then made out of all 12 stimulus, each 
+% one presented 15 times, with a total of 12*15 trials per block.
 %
-% The new signal will contain as many trials as blocks multiplied by the 
-% number of distinct stimulus on each block. The actual number of trials 
-% used for averaging is specified in the argument RepetitionsToAverage. 
-% If this value is less than RepetitionsPerBlock, then only the first 
-% appareances that stimulus inside a same block will be used for the 
-% average; the rest will be discarded. Whereas RepetitionsPerBlock 
-% specifies the limits between blocks of trials, the argument 
-% RepetitionsToAverage can be used to perform an average with less 
+% The actual number of trials used for averaging is specified through the 
+% argument RepetitionsToAverage. If this value is less than 
+% RepetitionsPerBlock, then only the first appareances of that stimulus 
+% inside a same block will be used for the average; the rest will be 
+% discarded. This argument can be used to perform an average with less 
 % information, thus testing whether good performance can be obtained 
 % without the need for long recording sessions.
 %
@@ -71,8 +69,12 @@ function signal = flt_avg_trials(varargin)
 % NOTE: All the stimulus that appear on a same block must have the same 
 % number of repetitions (as specified in RepetitionsPerBlock). Also, each
 % block must have the same number of distinct stimulus, as specified in
-% StimulusPerBlock (although the event types might change between 
+% StimulusPerBlock (although the event types might change among 
 % different blocks).
+%
+% NOTE 2: For accurate statistics when using cross-validation, use
+%   'EvaluationScheme' = {'chron', block_size}, with
+%   block_size = RepetitionsPerBlock * StimulusPerBlock
 %
 %
 % Example
@@ -92,14 +94,15 @@ function signal = flt_avg_trials(varargin)
 % row/column and intended letter (averaging only the first 10 flashings of 
 % each row/column):
 %
-% >> signal = set_targetmarkers('Signal', signal, 'EventTypes', markers);
 % >> signal = flt_avg_trials('Signal', signal, 'RepetitionsPerBlock', 15, 'StimulusPerBlock', 12, 'RepetitionsToAverage', 10);
 %
 % References
 % ==========
-% [1]: p300speller, donchin
-% [2]: luck
-% 
+%   [1] Farwell, Lawrence Ashley, and Emanuel Donchin. "Talking off the top of your head: toward
+%       a mental prosthesis utilizing event-related brain potentials." 
+%       Electroencephalography and clinical Neurophysiology 70.6 (1988): 510-523.
+%   [2] Luck, Steven J. "An Introduction to the Event-Related Potential Technique". MIT Press, 2014.
+%    
 
 
 if ~exp_beginfun('filter'); return; end;
@@ -110,21 +113,20 @@ if ~exp_beginfun('filter'); return; end;
 
 declare_properties(...
     'name', 'AverageTrials', ...
-    'depends', 'set_makepos', ...       % Require epoched data
-    'depends', 'set_targetmarkers', ... % Require markers to be already specified
+    'depends', {'set_makepos', 'set_targetmarkers'}, ...    % Require epoched data and markers
     'independent_channels', true,...
-    'independent_trials', true);
+    'independent_trials', false);
 
 % Input arguments declaration
 arg_define(varargin, ...
     arg_norep({'signal','Signal'}), ...
-    arg({'reps_per_block','RepetitionsPerBlock'}, 15, [1 Inf], ...
+    arg({'reps_per_block','RepetitionsPerBlock'}, mandatory, [], ...
         'Repetitions per Block. Number of repetitions of a same stimulus that constitute a block.'),...
-    arg({'num_stims','StimulusPerBlock'}, 15, [1 Inf], ...
+    arg({'num_stims','StimulusPerBlock'}, mandatory, [], ...
         'Stimulus per Block. Number of distinct stimulus that will be present on each block.'),...
-    arg({'stim_2_avg','RepetitionsToAverage'}, [], [1 Inf], ...
+    arg({'stim_2_avg','RepetitionsToAverage'}, [], [], ...
         'Repetitions to Average. Number of trials from a same block and stimulus to use when averaging. Must be less or equal than RepetitionsPerBlock. By default, this argument will be equal to RepetitionsPerBlock.'));
-        
+
 % If RepetitionsToAverage was not specified, make it equal to RepetitionsPerBlock
 if isempty(stim_2_avg)
    stim_2_avg = reps_per_block;
@@ -156,10 +158,17 @@ all_stimulus = unique({signal.epoch.type});
 
 % Get block size and number of blocks in the original signal
 trials_per_block = num_stims * reps_per_block;
-total_blocks = signal.trials / trials_per_block;
+total_blocks = ceil(signal.trials / trials_per_block);
+
+% Check if the assumption about each block having the same number of
+% stimulus and repetitions per stimulus is correct (i.e. total_blocks is an
+% integer)
+% if rem(total_blocks, 1) ~= 0
+%     error('Incomplete block found. Please check that the signal contains the same number of stimulus and repetitions per stimulus on each block.');
+% end
 
 % This matrix will say, for each block and stimulus, the position within 
-% the signal where that stimulus was first seen (for the current  block). 
+% the signal where that stimulus was first seen. 
 % The rest of the appearences of that stimulus within that block will be 
 % averaged and then deleted; the result of the average will be saved in 
 % the position of the first appearence.
@@ -173,7 +182,7 @@ for block = 1:total_blocks
     
     % Get all stimulus present on this block
     block_start_ind = (block - 1) * trials_per_block + 1;
-    block_end_ind = block_start_ind + trials_per_block - 1;
+    block_end_ind = min(block_start_ind + trials_per_block - 1, signal.trials);     % TODO: some blocks may be incomplete
     block_stim_codes = stim_codes(block_start_ind : block_end_ind);
     
     % Iterate through each trial inside the block and average events,
@@ -219,22 +228,26 @@ for block = 1:total_blocks
     end
 end
 
-% TODO: this could be done using pop_rejepoch?
-
 % Discard information about epochs that do not contain averages.
 remaining_trials = stim_first_app(:);           % Indexes of epochs used for average
 remaining_trials(remaining_trials == 0) = [];   % Delete zeros - we will index the signal with this array
 remaining_trials = sort(remaining_trials);
 
-% Only keep epochs with average
-signal.data = signal.data(:, :, remaining_trials);      
-signal.trials = length(remaining_trials);
-signal.event = signal.event(remaining_trials);
-signal.urevent = signal.urevent(remaining_trials);
-signal.epoch = signal.epoch(remaining_trials);
+% TODO: I get "Data unaligned" error in ml_calcloss if I delete 
+% extra epochs. For now, I will just leave them with an event type
+% that is not either target nor non-target.
 
-% TODO: still need to change signal.times field!!!
-% For now I'll just delete it (better than to have wrong info)
-signal.times = [];
+%signal = exp_eval(set_selepos(signal, remaining_trials'));
 
-exp_endfun;
+epochs = {signal.epoch.type};
+extra_trials = 1:length(epochs);
+extra_trials(remaining_trials) = [];
+
+% ...not sure how to do this without a loop
+for i = extra_trials
+   signal.epoch(i).type = {'__'};
+end
+
+% TODO: not sure how to change the event field either
+
+exp_endfun;be 
